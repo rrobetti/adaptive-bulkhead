@@ -144,16 +144,26 @@ AdaptiveBulkhead borrowing =
 
 Already admitted borrowed work is not stopped. A lower-priority lane can look over its latest limit only because that limit was reduced after higher-priority traffic came back while older borrowed work was still finishing. In that state, the lower-priority lane admits nothing new, and higher-priority work also fails fast if no capacity is free right then.
 
-Simple example:
+Simple examples:
 
-- The application has 2 total slots.
-- `critical` has 1 guaranteed slot.
-- `background` has 1 guaranteed slot and may borrow 1 extra slot when `critical` is idle.
-- `background` starts job A, then starts job B by borrowing the idle `critical` slot. Both total slots are now busy.
-- A `critical` request arrives. `critical` now wants its guaranteed slot back, so `background` is treated as being over its latest limit.
-- Job B is not interrupted, but no new `background` work is admitted.
-- The `critical` request still fails fast right now because both slots are already in use.
-- When either background job finishes, the next `critical` request can use the freed slot.
+- **Example 1: borrowing an idle slot**
+  - The application has 2 total slots.
+  - `critical` has 1 guaranteed slot.
+  - `background` has 1 guaranteed slot and may borrow 1 extra slot when `critical` is idle.
+  - `background` starts job A in its own slot.
+  - `background` starts job B by borrowing the idle `critical` slot.
+
+- **Example 2: higher-priority work comes back**
+  - Both slots are still busy with background job A and background job B.
+  - A `critical` request arrives.
+  - `critical` now wants its guaranteed slot back, so `background` is treated as being over its latest limit.
+  - Job B is not interrupted, but no new `background` work is admitted.
+  - The `critical` request still fails fast right now because both application slots are already in use.
+
+- **Example 3: capacity becomes free again**
+  - One background job finishes and releases its slot.
+  - `critical` can now use the freed slot.
+  - `background` can borrow again later only if `critical` becomes idle again.
 
 ### `CompletionStage` example
 
