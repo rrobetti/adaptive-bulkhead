@@ -43,14 +43,20 @@ final class BorrowingAllocator {
         }
 
         int slack = Math.max(0, capacityForChildren - totalGuaranteed);
-        int borrowPool = slack + totalLendable;
         Map<BulkheadNode, Integer> borrowed = new HashMap<>();
+        Map<BulkheadNode, Integer> lent = new HashMap<>();
+        Map<BulkheadNode, Integer> donorRemaining = new HashMap<>();
+        for (BulkheadNode child : children) {
+            donorRemaining.put(child, childStates.get(child).lendable);
+        }
         List<BulkheadNode> orderedBorrowers = new ArrayList<>(children);
         orderedBorrowers.sort(BORROWER_ORDER);
+        List<BulkheadNode> donors = new ArrayList<>(children);
+        donors.sort(DONOR_ORDER);
 
         for (Priority priority : Priority.values()) {
             boolean progressed = true;
-            while (borrowPool > 0 && progressed) {
+            while ((slack > 0 || totalLendable > 0) && progressed) {
                 progressed = false;
                 for (BulkheadNode child : orderedBorrowers) {
                     if (child.policy().priority() != priority) {
@@ -58,32 +64,29 @@ final class BorrowingAllocator {
                     }
                     ChildState state = childStates.get(child);
                     int allocated = borrowed.getOrDefault(child, 0);
-                    for (int weightStep = 0; weightStep < child.policy().weight() && borrowPool > 0; weightStep++) {
+                    for (int weightStep = 0; weightStep < child.policy().weight(); weightStep++) {
                         if (allocated >= state.borrowCap || allocated >= state.need) {
+                            break;
+                        }
+                        if (slack > 0) {
+                            borrowed.put(child, allocated + 1);
+                            allocated++;
+                            slack--;
+                            progressed = true;
+                            continue;
+                        }
+                        BulkheadNode donor = nextDonor(child, donors, donorRemaining);
+                        if (donor == null) {
                             break;
                         }
                         borrowed.put(child, allocated + 1);
                         allocated++;
-                        borrowPool--;
+                        donorRemaining.put(donor, donorRemaining.get(donor) - 1);
+                        lent.merge(donor, 1, Integer::sum);
+                        totalLendable--;
                         progressed = true;
                     }
                 }
-            }
-        }
-
-        int donorBackedBorrow = Math.max(0, borrowed.values().stream().mapToInt(Integer::intValue).sum() - slack);
-        Map<BulkheadNode, Integer> lent = new HashMap<>();
-        List<BulkheadNode> donors = new ArrayList<>(children);
-        donors.sort(DONOR_ORDER);
-        for (BulkheadNode donor : donors) {
-            if (donorBackedBorrow == 0) {
-                break;
-            }
-            ChildState state = childStates.get(donor);
-            int contribution = Math.min(state.lendable, donorBackedBorrow);
-            if (contribution > 0) {
-                lent.put(donor, contribution);
-                donorBackedBorrow -= contribution;
             }
         }
 
@@ -103,6 +106,29 @@ final class BorrowingAllocator {
     }
 
     record Allocation(int effectiveLimit, int borrowedCapacity, int lentCapacity) {
+    }
+
+    private static BulkheadNode nextDonor(
+            BulkheadNode borrower,
+            List<BulkheadNode> donors,
+            Map<BulkheadNode, Integer> donorRemaining
+    ) {
+        for (BulkheadNode donor : donors) {
+            if (borrower == donor || donorRemaining.getOrDefault(donor, 0) <= 0) {
+                continue;
+            }
+            if (canBorrowFrom(borrower, donor)) {
+                return donor;
+            }
+        }
+        return null;
+    }
+
+    private static boolean canBorrowFrom(BulkheadNode borrower, BulkheadNode donor) {
+        return switch (borrower.policy().borrowDirection()) {
+            case ANY -> true;
+            case HIGHER_PRIORITY_ONLY -> borrower.policy().priority().compareTo(donor.policy().priority()) < 0;
+        };
     }
 
     private record ChildState(int demand, int reserved, int need, int lendable, int borrowCap) {

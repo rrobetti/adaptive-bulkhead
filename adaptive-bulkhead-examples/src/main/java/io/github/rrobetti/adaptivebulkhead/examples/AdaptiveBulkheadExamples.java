@@ -34,7 +34,6 @@ public final class AdaptiveBulkheadExamples {
                 .child("reports", lane -> lane
                         .guaranteedConcurrency(0)
                         .maxConcurrency(30)
-                        .maximumBorrow(30)
                         .minimumRetainedCapacity(0)
                         .priority(Priority.BACKGROUND)
                         .weight(1))

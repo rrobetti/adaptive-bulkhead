@@ -3,8 +3,13 @@ package io.github.rrobetti.adaptivebulkhead;
 public record BorrowPolicy(
         boolean enabled,
         int maximumBorrow,
-        int minimumRetainedCapacity
+        int minimumRetainedCapacity,
+        BorrowDirection direction
 ) {
+    public BorrowPolicy(boolean enabled, int maximumBorrow, int minimumRetainedCapacity) {
+        this(enabled, maximumBorrow, minimumRetainedCapacity, BorrowDirection.HIGHER_PRIORITY_ONLY);
+    }
+
     public BorrowPolicy {
         if (maximumBorrow < 0) {
             throw new IllegalArgumentException("maximumBorrow must be non-negative");
@@ -15,5 +20,6 @@ public record BorrowPolicy(
         if (!enabled && maximumBorrow > 0) {
             throw new IllegalArgumentException("maximumBorrow must be zero when borrowing is disabled");
         }
+        java.util.Objects.requireNonNull(direction, "direction");
     }
 }

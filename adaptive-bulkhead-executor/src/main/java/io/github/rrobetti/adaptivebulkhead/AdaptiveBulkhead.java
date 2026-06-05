@@ -175,6 +175,11 @@ public final class AdaptiveBulkhead implements AutoCloseable {
             return this;
         }
 
+        public Builder borrowDirection(BorrowDirection borrowDirection) {
+            root.borrowDirection(borrowDirection);
+            return this;
+        }
+
         public Builder weight(int weight) {
             root.weight(weight);
             return this;
@@ -215,6 +220,7 @@ public final class AdaptiveBulkhead implements AutoCloseable {
         private Integer minimumRetainedCapacity = 0;
         private Integer weight = 1;
         private Priority priority = Priority.NORMAL;
+        private BorrowDirection borrowDirection = BorrowDirection.HIGHER_PRIORITY_ONLY;
 
         private NodeBuilder(String name, NodeBuilder parent) {
             if (name == null || name.isBlank()) {
@@ -248,6 +254,11 @@ public final class AdaptiveBulkhead implements AutoCloseable {
             return this;
         }
 
+        public NodeBuilder borrowDirection(BorrowDirection value) {
+            this.borrowDirection = Objects.requireNonNull(value, "borrowDirection");
+            return this;
+        }
+
         public NodeBuilder weight(int value) {
             this.weight = value;
             return this;
@@ -270,7 +281,8 @@ public final class AdaptiveBulkhead implements AutoCloseable {
                     maximumBorrow,
                     minimumRetainedCapacity,
                     weight,
-                    priority
+                    priority,
+                    borrowDirection
             );
             if (rootNode && policy.maxConcurrency() <= 0) {
                 throw new IllegalArgumentException("root maximum concurrency must be positive");

@@ -8,8 +8,28 @@ public record BulkheadPolicy(
         int maximumBorrow,
         int minimumRetainedCapacity,
         int weight,
-        Priority priority
+        Priority priority,
+        BorrowDirection borrowDirection
 ) {
+    public BulkheadPolicy(
+            int guaranteedConcurrency,
+            int maxConcurrency,
+            int maximumBorrow,
+            int minimumRetainedCapacity,
+            int weight,
+            Priority priority
+    ) {
+        this(
+                guaranteedConcurrency,
+                maxConcurrency,
+                maximumBorrow,
+                minimumRetainedCapacity,
+                weight,
+                priority,
+                BorrowDirection.HIGHER_PRIORITY_ONLY
+        );
+    }
+
     public BulkheadPolicy {
         if (guaranteedConcurrency < 0) {
             throw new IllegalArgumentException("guaranteedConcurrency must be non-negative");
@@ -36,9 +56,10 @@ public record BulkheadPolicy(
             throw new IllegalArgumentException("weight must be >= 1");
         }
         Objects.requireNonNull(priority, "priority");
+        Objects.requireNonNull(borrowDirection, "borrowDirection");
     }
 
     public BorrowPolicy borrowPolicy() {
-        return new BorrowPolicy(maximumBorrow > 0, maximumBorrow, minimumRetainedCapacity);
+        return new BorrowPolicy(maximumBorrow > 0, maximumBorrow, minimumRetainedCapacity, borrowDirection);
     }
 }

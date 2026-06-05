@@ -81,57 +81,95 @@ class BulkheadTreeTest {
                 "application",
                 new BulkheadPolicy(0, 30, 0, 0, 1, Priority.NORMAL),
                 List.of(
-                        new BulkheadDefinition("critical", new BulkheadPolicy(10, 10, 0, 10, 10, Priority.CRITICAL), List.of()),
-                        new BulkheadDefinition("normal", new BulkheadPolicy(20, 20, 0, 5, 5, Priority.NORMAL), List.of()),
-                        new BulkheadDefinition("background", new BulkheadPolicy(0, 20, 20, 0, 1, Priority.BACKGROUND), List.of())
+                        new BulkheadDefinition("critical", new BulkheadPolicy(10, 30, 20, 10, 10, Priority.CRITICAL), List.of()),
+                        new BulkheadDefinition("normal", new BulkheadPolicy(20, 20, 0, 5, 5, Priority.NORMAL), List.of())
                 )
         ));
 
-        Permit[] permits = new Permit[15];
+        Permit[] permits = new Permit[25];
         for (int i = 0; i < permits.length; i++) {
-            permits[i] = tree.acquireOrThrow("background");
+            permits[i] = tree.acquireOrThrow("critical");
         }
-        BulkheadRejectedException exception = assertThrows(BulkheadRejectedException.class, () -> tree.acquireOrThrow("background"));
+        BulkheadRejectedException exception = assertThrows(BulkheadRejectedException.class, () -> tree.acquireOrThrow("critical"));
 
         assertEquals(RejectionReason.BORROW_LIMIT_REACHED, exception.reason());
-        assertEquals(15, tree.snapshot("background").active());
+        assertEquals(25, tree.snapshot("critical").active());
         for (Permit permit : permits) {
             permit.close();
         }
-        assertEquals(0, tree.snapshot("background").active());
+        assertEquals(0, tree.snapshot("critical").active());
     }
 
     @Test
-    void higherPriorityDemandStopsNewBorrowedAdmissions() {
+    void lowerPriorityBorrowingIsDisabledByDefault() {
         BulkheadTree tree = new BulkheadTree(new BulkheadDefinition(
                 "application",
-                new BulkheadPolicy(0, 10, 0, 0, 1, Priority.NORMAL),
+                new BulkheadPolicy(0, 5, 0, 0, 1, Priority.NORMAL),
                 List.of(
                         new BulkheadDefinition("critical", new BulkheadPolicy(5, 5, 0, 0, 10, Priority.CRITICAL), List.of()),
-                        new BulkheadDefinition("normal", new BulkheadPolicy(5, 5, 0, 5, 5, Priority.NORMAL), List.of()),
                         new BulkheadDefinition("background", new BulkheadPolicy(0, 5, 5, 0, 1, Priority.BACKGROUND), List.of())
                 )
         ));
 
-        Permit[] borrowed = new Permit[5];
-        for (int i = 0; i < borrowed.length; i++) {
-            borrowed[i] = tree.acquireOrThrow("background");
-        }
-        Permit[] critical = new Permit[3];
-        for (int i = 0; i < critical.length; i++) {
-            critical[i] = tree.acquireOrThrow("critical");
-        }
-        borrowed[0].close();
-
         BulkheadRejectedException exception = assertThrows(BulkheadRejectedException.class, () -> tree.acquireOrThrow("background"));
-        assertEquals(RejectionReason.BORROW_LIMIT_REACHED, exception.reason());
-        assertTrue(tree.snapshot("background").active() > tree.snapshot("background").effectiveLimit());
 
-        for (Permit permit : critical) {
+        assertEquals(RejectionReason.BORROW_LIMIT_REACHED, exception.reason());
+        assertEquals(0, tree.snapshot("background").active());
+    }
+
+    @Test
+    void configuredAnyDirectionAllowsLowerPriorityBorrowing() {
+        BulkheadTree tree = new BulkheadTree(new BulkheadDefinition(
+                "application",
+                new BulkheadPolicy(0, 5, 0, 0, 1, Priority.NORMAL),
+                List.of(
+                        new BulkheadDefinition("critical", new BulkheadPolicy(5, 5, 0, 0, 10, Priority.CRITICAL), List.of()),
+                        new BulkheadDefinition(
+                                "background",
+                                new BulkheadPolicy(0, 5, 5, 0, 1, Priority.BACKGROUND, BorrowDirection.ANY),
+                                List.of()
+                        )
+                )
+        ));
+
+        Permit[] permits = new Permit[5];
+        for (int i = 0; i < permits.length; i++) {
+            permits[i] = tree.acquireOrThrow("background");
+        }
+
+        assertEquals(5, tree.snapshot("background").active());
+        assertEquals(5, tree.snapshot("background").effectiveLimit());
+        assertEquals(5, tree.snapshot("critical").lentCapacity());
+
+        for (Permit permit : permits) {
             permit.close();
         }
-        for (int i = 1; i < borrowed.length; i++) {
-            borrowed[i].close();
+    }
+
+    @Test
+    void totalLimitRemainsFixedWhenSiblingDemandReturnsToAFullParent() {
+        BulkheadTree tree = new BulkheadTree(new BulkheadDefinition(
+                "application",
+                new BulkheadPolicy(0, 10, 0, 0, 1, Priority.NORMAL),
+                List.of(
+                        new BulkheadDefinition("critical", new BulkheadPolicy(5, 10, 5, 5, 10, Priority.CRITICAL), List.of()),
+                        new BulkheadDefinition("normal", new BulkheadPolicy(5, 5, 0, 0, 5, Priority.NORMAL), List.of())
+                )
+        ));
+
+        Permit[] borrowed = new Permit[10];
+        for (int i = 0; i < borrowed.length; i++) {
+            borrowed[i] = tree.acquireOrThrow("critical");
+        }
+
+        BulkheadRejectedException exception = assertThrows(BulkheadRejectedException.class, () -> tree.acquireOrThrow("normal"));
+        assertEquals(RejectionReason.PARENT_BULKHEAD_REJECTED, exception.reason());
+        assertEquals(10, tree.snapshot("application").active());
+        assertEquals(10, tree.snapshot("application").effectiveLimit());
+        assertEquals(10, tree.snapshot("critical").active());
+
+        for (Permit permit : borrowed) {
+            permit.close();
         }
     }
 

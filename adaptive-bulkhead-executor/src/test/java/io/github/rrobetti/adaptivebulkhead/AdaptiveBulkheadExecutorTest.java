@@ -200,4 +200,34 @@ class AdaptiveBulkheadExecutorTest {
             assertEquals(0, bulkhead.snapshot("application").active());
         }
     }
+
+    @Test
+    void builderCanOptInToAnyBorrowDirection() {
+        try (AdaptiveBulkhead bulkhead = AdaptiveBulkhead.builder("application")
+                .maxConcurrency(5)
+                .child("critical", lane -> lane
+                        .guaranteedConcurrency(5)
+                        .maxConcurrency(5)
+                        .minimumRetainedCapacity(0)
+                        .priority(Priority.CRITICAL))
+                .child("background", lane -> lane
+                        .guaranteedConcurrency(0)
+                        .maxConcurrency(5)
+                        .maximumBorrow(5)
+                        .borrowDirection(BorrowDirection.ANY)
+                        .minimumRetainedCapacity(0)
+                        .priority(Priority.BACKGROUND))
+                .build()) {
+            Permit[] permits = new Permit[5];
+            for (int i = 0; i < permits.length; i++) {
+                permits[i] = bulkhead.acquireOrThrow("background");
+            }
+
+            assertEquals(5, bulkhead.snapshot("background").active());
+
+            for (Permit permit : permits) {
+                permit.close();
+            }
+        }
+    }
 }

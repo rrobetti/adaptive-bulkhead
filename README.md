@@ -17,7 +17,7 @@ AdaptiveBulkhead decides whether work may start **immediately**. It is not a thr
 - atomic-counter based limits with short compare-and-set loops
 - no queues, semaphores, waits, timeouts, task ageing, or preemption
 - priorities affect **capacity allocation**, not JVM thread priority or task scheduling order
-- borrowing is deterministic and conservative: reserve guarantees, compute lendable capacity, then allocate borrowed slots by priority and weight
+- borrowing is deterministic and conservative: reserve guarantees, compute lendable capacity, then allocate borrowed slots by priority and weight; by default, only higher-priority lanes may borrow from lower-priority lanes
 
 ## Why it is not a thread pool
 
@@ -46,7 +46,6 @@ AdaptiveBulkhead bulkhead =
                 .child("reports", lane -> lane
                         .guaranteedConcurrency(0)
                         .maxConcurrency(30)
-                        .maximumBorrow(30)
                         .minimumRetainedCapacity(0)
                         .priority(Priority.BACKGROUND)
                         .weight(1))
@@ -114,56 +113,75 @@ A `critical/payments` acquisition consumes capacity from `application -> critica
 
 ### Priority and borrowing example
 
-Unused guaranteed capacity can be borrowed temporarily:
+Borrowing never changes the parent or application total limit. It only changes each lane's current effective limit. A lane can temporarily sit above its latest effective limit because already admitted borrowed work is allowed to finish, but the total active count still never exceeds the parent `maxConcurrency`.
 
 ```java
 AdaptiveBulkhead borrowing =
         AdaptiveBulkhead.builder("application")
-                .maxConcurrency(70)
+                .maxConcurrency(10)
                 .child("critical", lane -> lane
-                        .guaranteedConcurrency(40)
-                        .maxConcurrency(40)
-                        .minimumRetainedCapacity(40)
+                        .guaranteedConcurrency(4)
+                        .maxConcurrency(6)
+                        .maximumBorrow(2)
+                        .minimumRetainedCapacity(4)
                         .priority(Priority.CRITICAL)
                         .weight(10))
                 .child("normal", lane -> lane
-                        .guaranteedConcurrency(30)
-                        .maxConcurrency(30)
-                        .minimumRetainedCapacity(15)
+                        .guaranteedConcurrency(6)
+                        .maxConcurrency(6)
+                        .minimumRetainedCapacity(2)
                         .priority(Priority.NORMAL)
                         .weight(5))
-                .child("background", lane -> lane
-                        .guaranteedConcurrency(0)
-                        .maxConcurrency(20)
-                        .maximumBorrow(20)
-                        .minimumRetainedCapacity(0)
-                        .priority(Priority.BACKGROUND)
-                        .weight(1))
                 .build();
 ```
 
-Already admitted borrowed work is not stopped. A lower-priority lane can look over its latest limit only because that limit was reduced after higher-priority traffic came back while older borrowed work was still finishing. In that state, the lower-priority lane admits nothing new, and higher-priority work also fails fast if no capacity is free right then.
+Default direction:
+
+- `critical` may borrow from `normal` because `critical` has higher priority.
+- `normal` may not borrow from `critical` unless you opt in to a different direction.
 
 Simple examples:
 
-- **Example 1: borrowing an idle slot**
-  - The application has 2 total slots.
-  - `critical` has 1 guaranteed slot.
-  - `background` has 1 guaranteed slot and may borrow 1 extra slot when `critical` is idle.
-  - `background` starts job A in its own slot.
-  - `background` starts job B by borrowing the idle `critical` slot.
+- **Example 1: higher priority borrows from a lower lane**
+  - The application has 10 total slots.
+  - `critical` guarantees 4 slots and may borrow 2 more.
+  - `normal` guarantees 6 slots and keeps at least 2 for itself.
+  - If `normal` is using only 2 slots, it has 4 idle guaranteed slots, and 2 of them may be lent.
+  - `critical` can run 6 requests total: its own 4 plus 2 borrowed from `normal`.
 
-- **Example 2: higher-priority work comes back**
-  - Both slots are still busy with background job A and background job B.
-  - A `critical` request arrives.
-  - `critical` now wants its guaranteed slot back, so `background` is treated as being over its latest limit.
-  - Job B is not interrupted, but no new `background` work is admitted.
-  - The `critical` request still fails fast right now because both application slots are already in use.
+- **Example 2: total limit stays fixed**
+  - `critical` already has 6 active requests.
+  - The whole application is full at 10 active requests.
+  - A new `normal` request arrives.
+  - The application still does not go above 10 total active requests.
+  - That new `normal` request fails fast if no total slot is free.
+  - At the same time, `critical` can temporarily look over its latest revised lane limit until one of its already admitted borrowed requests finishes.
 
-- **Example 3: capacity becomes free again**
-  - One background job finishes and releases its slot.
-  - `critical` can now use the freed slot.
-  - `background` can borrow again later only if `critical` becomes idle again.
+- **Example 3: opting in to lower-from-higher borrowing**
+  - If you explicitly configure a lower lane with `.borrowDirection(BorrowDirection.ANY)`, it may borrow from an idle higher lane.
+  - If a higher-priority request later arrives while all total slots are already busy, that higher-priority request still fails fast right then.
+  - Borrowed work is not interrupted. The lower lane simply stops receiving new admissions until capacity is restored.
+
+Optional opt-in:
+
+```java
+AdaptiveBulkhead flexibleBorrowing =
+        AdaptiveBulkhead.builder("application")
+                .maxConcurrency(6)
+                .child("critical", lane -> lane
+                        .guaranteedConcurrency(2)
+                        .maxConcurrency(2)
+                        .minimumRetainedCapacity(0)
+                        .priority(Priority.CRITICAL))
+                .child("background", lane -> lane
+                        .guaranteedConcurrency(0)
+                        .maxConcurrency(4)
+                        .maximumBorrow(2)
+                        .borrowDirection(BorrowDirection.ANY)
+                        .minimumRetainedCapacity(0)
+                        .priority(Priority.BACKGROUND))
+                .build();
+```
 
 ### `CompletionStage` example
 
