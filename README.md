@@ -142,7 +142,7 @@ AdaptiveBulkhead borrowing =
                 .build();
 ```
 
-Borrowed work keeps running once it has been admitted. If higher-priority traffic comes back, a lower-priority lane might be over its new limit for a short time. While that happens, the lane will not admit any new work until enough running work finishes and capacity is available again.
+Already admitted borrowed work is not stopped. A lower-priority lane can look over its latest limit only because that limit was reduced after higher-priority traffic came back while older borrowed work was still finishing. In that state, the lower-priority lane admits nothing new, and higher-priority work also fails fast if no capacity is free right then.
 
 ### `CompletionStage` example
 
