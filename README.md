@@ -142,7 +142,7 @@ AdaptiveBulkhead borrowing =
                 .build();
 ```
 
-Borrowed work is never interrupted. When higher-priority demand returns, lower-priority lanes can temporarily remain above their revised effective limit, but they stop receiving new admissions until capacity is restored.
+Borrowed work keeps running once it has been admitted. If higher-priority traffic comes back, a lower-priority lane might be over its new limit for a short time. While that happens, the lane will not admit any new work until enough running work finishes and capacity is available again.
 
 ### `CompletionStage` example
 
