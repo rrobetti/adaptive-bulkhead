@@ -7,7 +7,6 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.CompletionException;
 import java.util.concurrent.CompletionStage;
 import java.util.concurrent.Executor;
 import java.util.concurrent.ExecutorService;
@@ -65,7 +64,12 @@ public final class AdaptiveBulkhead implements AutoCloseable {
 
     public <T> Future<T> submit(String bulkheadName, Callable<T> callable) {
         Objects.requireNonNull(callable, "callable");
-        HierarchyPermit permit = tree.acquireOrThrow(bulkheadName);
+        final HierarchyPermit permit;
+        try {
+            permit = tree.acquireOrThrow(bulkheadName);
+        } catch (BulkheadRejectedException exception) {
+            return CompletableFuture.failedFuture(exception);
+        }
         BulkheadTaskFuture<T> future = new BulkheadTaskFuture<>(permit, tree);
         try {
             executor.execute(() -> {
@@ -93,7 +97,12 @@ public final class AdaptiveBulkhead implements AutoCloseable {
             Supplier<? extends CompletionStage<T>> supplier
     ) {
         Objects.requireNonNull(supplier, "supplier");
-        HierarchyPermit permit = tree.acquireOrThrow(bulkheadName);
+        final HierarchyPermit permit;
+        try {
+            permit = tree.acquireOrThrow(bulkheadName);
+        } catch (BulkheadRejectedException exception) {
+            return CompletableFuture.failedStage(exception);
+        }
         tree.emitStarted(permit.bulkheadName());
         final CompletionStage<T> stage;
         try {
@@ -199,7 +208,6 @@ public final class AdaptiveBulkhead implements AutoCloseable {
 
     public static final class NodeBuilder {
         private final String name;
-        private final NodeBuilder parent;
         private final List<NodeBuilder> children = new ArrayList<>();
         private Integer guaranteedConcurrency = 0;
         private Integer maxConcurrency;
@@ -213,7 +221,6 @@ public final class AdaptiveBulkhead implements AutoCloseable {
                 throw new IllegalArgumentException("name must not be blank");
             }
             this.name = name;
-            this.parent = parent;
         }
 
         public NodeBuilder guaranteedConcurrency(int value) {
