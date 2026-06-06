@@ -183,6 +183,14 @@ AdaptiveBulkhead flexibleBorrowing =
                 .build();
 ```
 
+### Flow diagrams
+
+See [docs/sequence-diagrams.md](docs/sequence-diagrams.md) for Mermaid sequence diagrams covering:
+
+- a normal acquisition that stays inside the lane's own limit
+- an acquisition that succeeds by borrowing from a lower-priority sibling
+- a fail-fast rejection with rollback when a path cannot be admitted
+
 ### `CompletionStage` example
 
 ```java
