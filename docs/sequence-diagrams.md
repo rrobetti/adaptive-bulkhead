@@ -1,7 +1,7 @@
 # AdaptiveBulkhead sequence diagrams
 
 These diagrams keep the main README short and show the most important admission flows step by step.
-They also mirror the implementation loops: `BulkheadTree` walks the path from root to leaf, and `BorrowingAllocator` iterates sibling lanes when it recalculates effective limits.
+They stay at the request, application, lane, and permit level so the flow is easier to read than the internal helper classes.
 
 ## 1. Normal acquisition
 
@@ -11,22 +11,20 @@ The request fits inside the lane's own effective limit, so no borrowing is neede
 sequenceDiagram
     autonumber
     actor Caller
-    participant Bulkhead
-    participant Tree
-    participant Allocator
+    participant Application
+    participant RequestedLane
     participant PathNode as each node in requested path
     participant Permit
-    Caller->>Bulkhead: acquireOrThrow("critical")
-    Bulkhead->>Tree: tryAcquire(path)
-    Tree->>Allocator: refresh effective limits
-    Allocator-->>Tree: lane effective limit already covers request
+    Caller->>Application: acquireOrThrow("critical")
+    Application->>RequestedLane: check current effective limit
+    RequestedLane-->>Application: own limit already covers request
     loop for each node from root to leaf
-        Tree->>PathNode: tryAcquire one slot
-        PathNode-->>Tree: granted
+        Application->>PathNode: tryAcquire one slot
+        PathNode-->>Application: granted
     end
-    Tree->>Permit: create permit for acquired path
-    Permit-->>Bulkhead: permit
-    Bulkhead-->>Caller: permit returned
+    Application->>Permit: create permit for acquired path
+    Permit-->>Application: permit
+    Application-->>Caller: permit returned
     Caller->>Permit: close()
     loop for each node from leaf to root
         Permit->>PathNode: release
@@ -47,35 +45,33 @@ If `normal` is only using 2 slots, 2 of its idle slots may be lent to `critical`
 sequenceDiagram
     autonumber
     actor Caller
-    participant Bulkhead
-    participant Tree
-    participant Allocator
+    participant Application
     participant SiblingLane as each sibling lane
-    participant CriticalLane
-    participant NormalLane
+    participant RequestedLane as critical lane
+    participant LendingLane as normal lane
     participant PathNode as each node in requested path
     participant Permit
-    Note right of NormalLane: normal is using 2 of 6 slots,<br/>so 2 of its 4 idle slots may be lent to critical.
-    Caller->>Bulkhead: acquireOrThrow("critical")
-    Bulkhead->>Tree: tryAcquire(path)
-    Tree->>Allocator: recompute effective limits
+    Note right of LendingLane: normal is using 2 of 6 slots,<br/>so 2 of its 4 idle slots may be lent to critical.
+    Caller->>Application: acquireOrThrow("critical")
+    Application->>RequestedLane: check current effective limit
+    RequestedLane-->>Application: 2 extra slots needed
     loop for each sibling lane
-        Allocator->>SiblingLane: compute demand, reserved, lendable
-        SiblingLane-->>Allocator: child state
+        Application->>SiblingLane: compute demand, reserved, lendable
+        SiblingLane-->>Application: child state
     end
     loop for each priority / weight round
-        Allocator->>NormalLane: take 1 lendable slot
-        NormalLane-->>Allocator: lend 1 slot to critical
+        Application->>LendingLane: take 1 lendable slot
+        LendingLane-->>Application: lend 1 slot to critical
     end
-    Allocator-->>Tree: critical effective limit becomes 6
+    Application-->>RequestedLane: effective limit becomes 6
     loop for each node from root to leaf
-        Tree->>PathNode: tryAcquire one slot under revised limit
-        PathNode-->>Tree: granted
+        Application->>PathNode: tryAcquire one slot under revised limit
+        PathNode-->>Application: granted
     end
-    Tree->>Permit: create permit
-    Permit-->>Bulkhead: permit
-    Bulkhead-->>Caller: permit returned
-    Note right of CriticalLane: Total active work still stays within the application limit of 10.
+    Application->>Permit: create permit
+    Permit-->>Application: permit
+    Application-->>Caller: permit returned
+    Note right of RequestedLane: Total active work still stays within the application limit of 10.
     Caller->>Permit: close()
     loop for each node from leaf to root
         Permit->>PathNode: release
@@ -90,20 +86,14 @@ This shows why the total limit stays fixed even when a lane previously borrowed 
 sequenceDiagram
     autonumber
     actor Caller
-    participant Bulkhead
-    participant Tree
-    participant Allocator
     participant Application
     participant RequestedLane
     Note right of Application: The application is already at its total maxConcurrency.
-    Caller->>Bulkhead: acquireOrThrow("normal")
-    Bulkhead->>Tree: tryAcquire(path)
-    Tree->>Allocator: recompute effective limits
-    Allocator-->>Tree: latest limits prepared
-    Tree->>Application: tryAcquire the first slot in the path
-    Application-->>Tree: rejected
-    Tree-->>Bulkhead: rejection (no permit created)
-    Bulkhead-->>Caller: BulkheadRejectedException
+    Caller->>Application: acquireOrThrow("normal")
+    Application->>RequestedLane: check lane limit
+    RequestedLane-->>Application: lane could admit if a total slot existed
+    Application->>Application: tryAcquire the next total slot
+    Application-->>Caller: BulkheadRejectedException
     Note right of RequestedLane: Nothing is preempted. Existing borrowed work keeps running, and the new request fails fast.
 ```
 
@@ -115,21 +105,18 @@ In a hierarchy, admission walks from root to leaf. If a parent grants but a deep
 sequenceDiagram
     autonumber
     actor Caller
-    participant Bulkhead
-    participant Tree
+    participant Application
     participant GrantedNode as each granted node on the path
     participant RejectingNode as rejecting leaf node
-    Caller->>Bulkhead: acquireOrThrow("critical/payments")
-    Bulkhead->>Tree: tryAcquire(path)
+    Caller->>Application: acquireOrThrow("critical/payments")
     loop for each node before the rejecting leaf
-        Tree->>GrantedNode: tryAcquire one slot
-        GrantedNode-->>Tree: granted
+        Application->>GrantedNode: tryAcquire one slot
+        GrantedNode-->>Application: granted
     end
-    Tree->>RejectingNode: tryAcquire one slot
-    RejectingNode-->>Tree: rejected
+    Application->>RejectingNode: tryAcquire one slot
+    RejectingNode-->>Application: rejected
     loop rollback granted nodes from leaf to root
-        Tree->>GrantedNode: release previously granted slot
+        Application->>GrantedNode: release previously granted slot
     end
-    Tree-->>Bulkhead: rejection with parent rollback
-    Bulkhead-->>Caller: BulkheadRejectedException
+    Application-->>Caller: BulkheadRejectedException
 ```
