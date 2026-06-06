@@ -1,5 +1,7 @@
 # AdaptiveBulkhead
 
+[![CI](https://github.com/rrobetti/adaptive-bulkhead/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/rrobetti/adaptive-bulkhead/actions/workflows/ci.yml)
+
 > AdaptiveBulkhead is a hierarchical, priority-aware bulkhead and admission-control library for Java. It isolates workloads, shares unused capacity safely, and immediately rejects work when protected capacity is unavailable.
 
 AdaptiveBulkhead decides whether work may start **immediately**. It is not a thread pool, it does not queue, and it never blocks callers waiting for capacity. When protected capacity is unavailable, admission fails fast with a detailed rejection reason.
