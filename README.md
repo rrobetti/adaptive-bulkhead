@@ -25,6 +25,18 @@ AdaptiveBulkhead decides whether work may start **immediately**. It is not a thr
 
 AdaptiveBulkhead controls *admission*. Executors control *execution*. Admission is performed **before** work is submitted, so rejected work never creates a virtual thread and never enters an executor queue.
 
+## Borrowing is not work stealing
+
+AdaptiveBulkhead does **not** implement classic work stealing.
+
+In a work-stealing design, idle workers usually pull queued work from other workers. AdaptiveBulkhead does not move queued work, move running work, or reassign a request from one lane to another. It only recalculates how many **new admissions** each lane may take right now.
+
+So the more accurate term here is **slot borrowing** or **capacity borrowing**:
+
+- a higher-priority lane may use idle capacity from a lower-priority lane
+- already admitted work keeps running where it started
+- if no total slot is free, the new request still fails fast
+
 ## Quick start
 
 ```java
